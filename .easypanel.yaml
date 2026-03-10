@@ -1,0 +1,28 @@
+name: Divertirx - IA Chat para Internet e TV
+description: Chatbot com IA humanizada para testes e contratações de VPN e TV via Internet
+logo: https://cdn-icons-png.flaticon.com/512/7912/7912108.png
+
+# Variáveis de ambiente obrigatórias
+environment:
+  - GROQ_API_KEY
+  - ONPIX_USERNAME
+  - ONPIX_PASSWORD
+  - SERVEX_API_KEY
+
+# Configurações do build
+build:
+  dockerfile: Dockerfile
+  context: .
+
+# Configurações do run
+run:
+  ports:
+    - 3000
+  volumes:
+    - database:/app/database
+
+# Variáveis que são senhas (ocultas no painel)
+secrets:
+  - GROQ_API_KEY
+  - ONPIX_PASSWORD
+  - SERVEX_API_KEY
