@@ -1,5 +1,5 @@
 // Configuração de provedores de IA
-// Suporta: groq, openrouter, openai, ollama
+// Suporta: groq, openrouter, openai, ollama, gemini
 
 const AI_PROVIDERS = {
   groq: {
@@ -23,6 +23,9 @@ const AI_PROVIDERS = {
       { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', context: 200000 },
       { id: 'meta-llama/llama-3.3-70b-instruct', name: 'Llama 3.3 70B', context: 128000 },
       { id: 'google/gemini-pro-1.5', name: 'Gemini Pro 1.5', context: 200000 },
+      { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'Nemotron Nano (Free)', context: 128000 },
+      { id: 'qwen/qwen3-coder:free', name: 'Qwen3 Coder (Free)', context: 128000 },
+      { id: 'deepseek/deepseek-chat:free', name: 'Deepseek Chat (Free)', context: 128000 },
     ],
     envKey: 'OPENROUTER_API_KEY',
     extraHeaders: {
@@ -41,9 +44,22 @@ const AI_PROVIDERS = {
     ],
     envKey: 'OPENAI_API_KEY',
   },
+  gemini: {
+    name: 'Google Gemini',
+    baseURL: 'https://generativelanguage.googleapis.com/v1beta',
+    defaultModel: 'gemini-2.5-flash-preview',
+    models: [
+      { id: 'gemini-2.5-flash-preview', name: 'Gemini 2.5 Flash', context: 1000000 },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', context: 1000000 },
+      { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', context: 1000000 },
+      { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', context: 2000000 },
+    ],
+    envKey: 'GEMINI_API_KEY',
+    isGemini: true,
+  },
   ollama: {
     name: 'Ollama (Self-Hosted)',
-    baseURL: process.env.OLLAMA_URL || 'http://localhost:11434/api',
+    baseURL: process.env.OLLAMA_URL || 'http://localhost:11434/v1',
     defaultModel: 'llama3.2',
     models: [
       { id: 'llama3.2', name: 'Llama 3.2', context: 128000 },
@@ -54,7 +70,7 @@ const AI_PROVIDERS = {
     ],
     envKey: 'OLLAMA_URL',
     isLocal: true,
-    noAuth: true, // Ollama não usa API key por padrão
+    noAuth: true,
   },
 }
 
@@ -71,6 +87,7 @@ export function getAllProviders() {
     name: config.name,
     models: config.models,
     isLocal: config.isLocal || false,
+    isFreeTier: config.models.some(m => m.name.includes('Free')),
   }))
 }
 
@@ -88,6 +105,7 @@ export function getModelConfig() {
     apiKey: provider.noAuth ? null : process.env[provider.envKey],
     extraHeaders: provider.extraHeaders || {},
     isLocal: provider.isLocal || false,
+    isGemini: provider.isGemini || false,
   }
 }
 
