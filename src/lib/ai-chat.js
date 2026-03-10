@@ -1,17 +1,42 @@
-import { Groq } from 'groq-sdk'
+import { getModelConfig, getSystemPrompt } from './ai-config'
 import { saveMessage } from './db-client'
 
-// Inicializar cliente Groq
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY || 'gsk_placeholder'
-})
+// Cliente de IA genérico (suporta múltiplos provedores)
+async function callAI({ messages, temperature = 0.7, max_tokens = 1000 }) {
+  const config = getModelConfig()
+  
+  const response = await fetch(`${config.baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`,
+      ...config.extraHeaders,
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages,
+      temperature,
+      max_tokens,
+    }),
+  })
+
+  if (!response.ok) {
+    const error = await response.text()
+    throw new Error(`AI API error: ${response.status} - ${error}`)
+  }
+
+  return await response.json()
+}
 
 // Função para gerar resposta da IA
-export async function generateAIResponse({ message, history, systemPrompt }) {
+export async function generateAIResponse({ message, history, context = {} }) {
   try {
+    const config = getModelConfig()
+    console.log(`🤖 Usando IA: ${config.provider} - ${config.modelName}`)
+
     // Preparar mensagens para API
     const messages = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: getSystemPrompt(context) },
       ...history.map(msg => ({
         role: msg.role,
         content: msg.content
@@ -19,15 +44,10 @@ export async function generateAIResponse({ message, history, systemPrompt }) {
       { role: 'user', content: message }
     ]
 
-    // Chamar API do Groq
-    const chatCompletion = await groq.chat.completions.create({
-      messages: messages,
-      model: 'llama-3.3-70b-versatile',
-      temperature: 0.7,
-      max_tokens: 1000
-    })
+    // Chamar API
+    const completion = await callAI({ messages })
 
-    const responseText = chatCompletion.choices[0]?.message?.content || 'Desculpe, não entendi. Pode repetir?'
+    const responseText = completion.choices[0]?.message?.content || 'Desculpe, não entendi. Pode repetir?'
 
     // Salvar mensagem no histórico
     if (process.env.NODE_ENV === 'production') {
@@ -38,13 +58,12 @@ export async function generateAIResponse({ message, history, systemPrompt }) {
       }
     }
 
-    // Tentar parsear se a IA quer criar teste
+    // Detectar intenção da IA (lógica simples)
+    const lowerResponse = responseText.toLowerCase()
     let wantsTest = false
     let testType = null
     let serverId = null
 
-    // Detectar intenção da IA (lógica simples)
-    const lowerResponse = responseText.toLowerCase()
     if (lowerResponse.includes('internet') || lowerResponse.includes('vpn')) {
       wantsTest = lowerResponse.includes('criar') || lowerResponse.includes('testar') || lowerResponse.includes('fazer')
       testType = 'internet'
@@ -67,7 +86,7 @@ export async function generateAIResponse({ message, history, systemPrompt }) {
   } catch (error) {
     console.error('Erro na IA:', error)
     return {
-      text: 'Opa! Não consegui processar sua mensagem. Pode tentar de novo? 😅',
+      text: 'Opa! Não consegui processar sua mensagem agora. Pode tentar de novo? 😅',
       wantsTest: false,
       testType: null,
       serverId: null
@@ -75,27 +94,60 @@ export async function generateAIResponse({ message, history, systemPrompt }) {
   }
 }
 
-// Função para gerar system prompt dinâmico baseado em contexto
-export function createSystemPrompt(context = {}) {
-  const basePrompt = `Você é a Divertirx, uma assistente amigável e humanizada que ajuda usuários a encontrar entretenimento na internet.
+// Função para obter informações do provedor atual
+export function getActiveProviderInfo() {
+  const config = getModelConfig()
+  return {
+    name: config.provider,
+    model: config.modelName,
+    apiConfigured: !!config.apiKey,
+  }
+}
 
- SUAS REGRAS IMPORTANTES:
- 1. Você só pode oferecer 2 serviços: Internet VPN Ilimitada (R$20/mês) ou TV via Internet (R$25/mês)
- 2. Cada pessoa só pode fazer 1 teste NO LIFETIME (não importa o tempo)
- 3. Se a pessoa já fez teste, responda: "Já fizemos seu teste! 🎁 Você usou: [serviço escolhido]"
- 4. Se a pessoa quer testar, pergunte qual serviço prefere: Internet VPN ou TV via Internet
- 5. Se escolher TV, pergunte qual servidor quer testar
- 6. Ao criar teste, informe credenciais e prazo (4 horas)
- 7. Se quiser contratar, informe os preços e peça pagamento via PIX
- 8. Se quiser renovar, peça o usuário e faça o processo
+// Fallback para modo demo (sem API)
+export function generateDemoResponse(message, context = {}) {
+  const lowerMsg = message.toLowerCase()
+  
+  if (context.userTested) {
+    return {
+      text: `Já fizemos seu teste! 🎁 Você usou: ${context.testedService}.\n\nObrigado por usar a Divertirx!`,
+      wantsTest: false,
+      testType: null,
+      serverId: null
+    }
+  }
 
- SEU TON:
- - Seja amigável, use emojis moderadamente
- - Seja direto e objetivo
- - Não use menus de números (1, 2, 3)
- - Use conversa natural como um atendente de true
+  if (lowerMsg.includes('oi') || lowerMsg.includes('olá') || lowerMsg.includes('ola')) {
+    return {
+      text: 'Olá! 👋 Bem-vindo à Divertirx, seu canal de diversão na internet! 🎬\n\nO que você prefere: Internet VPN ilimitada ou TV via Internet?',
+      wantsTest: false,
+      testType: null,
+      serverId: null
+    }
+  }
 
- Comece sempre com uma saudação acolhedora e apresente os serviços.`
+  if (lowerMsg.includes('tv') || lowerMsg.includes('televisão')) {
+    return {
+      text: 'Perfeito! 📺 A TV via Internet tem vários servidores com canais incríveis.\n\nEscolha um para testar:\n• 🎬 Servidor Filmes\n• 🏆 Servidor Esporte\n• 🌚 Servidor Adulto\n\nQual você quer testar?',
+      wantsTest: true,
+      testType: 'tv',
+      serverId: null
+    }
+  }
 
-  return basePrompt
+  if (lowerMsg.includes('internet') || lowerMsg.includes('vpn')) {
+    return {
+      text: 'Boa escolha! 🚀 Internet VPN ilimitada por apenas R$20/mês. Navegação segura e sem limites!\n\nQuer fazer um teste de 4 horas?',
+      wantsTest: true,
+      testType: 'internet',
+      serverId: null
+    }
+  }
+
+  return {
+    text: 'Desculpe, não entendi muito bem. Você quer Internet VPN ou TV via Internet?',
+    wantsTest: false,
+    testType: null,
+    serverId: null
+  }
 }
