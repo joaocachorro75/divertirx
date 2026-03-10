@@ -1,98 +1,101 @@
-import sqlite3 from 'sqlite3'
-import { promisify } from 'util'
+import Database from 'better-sqlite3'
 import crypto from 'crypto'
+import path from 'path'
+import fs from 'fs'
 
-// Criar conexão com banco de dados
-const db = new sqlite3.Database('./database/clients.db')
-const runAsync = promisify(db.run).bind(db)
-const getAsync = promisify(db.get).bind(db)
-
-// Garantir que banco esteja inicializado
-export async function initDatabase() {
-  await runAsync(`
-    CREATE TABLE IF NOT EXISTS tests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_hash TEXT NOT NULL,
-      ip_hash TEXT NOT NULL,
-      service_type TEXT NOT NULL CHECK(service_type IN ('internet', 'tv')),
-      server_id TEXT,
-      created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      credentials TEXT
-    )
-  `)
-
-  await runAsync(`
-    CREATE TABLE IF NOT EXISTS chat_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_hash TEXT NOT NULL,
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      timestamp TEXT NOT NULL
-    )
-  `)
-
-  console.log('✅ Banco de dados inicializado')
+// Ensure database directory exists
+const dbDir = path.join(process.cwd(), 'database')
+if (!fs.existsSync(dbDir)) {
+  fs.mkdirSync(dbDir, { recursive: true })
 }
 
-// Gerar hash para anonimização
+// Initialize database
+const db = new Database(path.join(dbDir, 'clients.db'))
+
+// Initialize tables
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_hash TEXT NOT NULL,
+    ip_hash TEXT NOT NULL,
+    service_type TEXT NOT NULL CHECK(service_type IN ('internet', 'tv')),
+    server_id TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    credentials TEXT
+  )
+`)
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_hash TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    timestamp TEXT NOT NULL
+  )
+`)
+
+console.log('✅ Banco de dados inicializado')
+
+// Generate hash for anonymization
 function generateHash(data) {
   return crypto.createHash('sha256').update(data).digest('hex').substring(0, 32)
 }
 
-// Verificar se usuário já fez teste
+// Check if user already has a test
 export async function checkTestLimit(userId, ip) {
   const userHash = generateHash(userId)
   const ipHash = generateHash(ip)
   
-  const test = await getAsync(
-    'SELECT * FROM tests WHERE user_hash = ? AND ip_hash = ?',
-    [userHash, ipHash]
-  )
+  const stmt = db.prepare('SELECT * FROM tests WHERE user_hash = ? AND ip_hash = ?')
+  const test = stmt.get(userHash, ipHash)
   
   return test || null
 }
 
-// Salvar registro de teste
+// Save test record
 export async function saveTestRecord(userId, ip, serviceType, serverId, credentials) {
   const userHash = generateHash(userId)
   const ipHash = generateHash(ip)
   const createdAt = new Date().toISOString()
-  const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString() // 4 horas
+  const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString() // 4 hours
 
   const credentialsJson = JSON.stringify(credentials)
 
-  const result = await runAsync(
+  const stmt = db.prepare(
     `INSERT INTO tests (user_hash, ip_hash, service_type, server_id, created_at, expires_at, credentials)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [userHash, ipHash, serviceType, serverId || null, createdAt, expiresAt, credentialsJson]
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
   
-  return { success: true, id: result.lastID }
+  const result = stmt.run(userHash, ipHash, serviceType, serverId || null, createdAt, expiresAt, credentialsJson)
+  
+  return { success: true, id: result.lastInsertRowid }
 }
 
-// Salvar mensagem no histórico
+// Save message to history
 export async function saveMessage(userId, role, content) {
   const userHash = generateHash(userId)
   const timestamp = new Date().toISOString()
 
-  await runAsync(
+  const stmt = db.prepare(
     `INSERT INTO chat_history (user_hash, role, content, timestamp) 
-     VALUES (?, ?, ?, ?)`,
-    [userHash, role, content, timestamp]
+     VALUES (?, ?, ?, ?)`
   )
+  
+  stmt.run(userHash, role, content, timestamp)
 }
 
-// Pegar histórico do usuário
+// Get user history
 export function getUserHistory(messages) {
-  // Filtrar apenas mensagens relevantes (últimas 10)
+  // Filter only relevant messages (last 10)
   return messages.slice(-10).map(msg => ({
     role: msg.role,
     content: msg.content
   }))
 }
 
-// Formatar credenciais para mensagem
+// Format credentials for message
 export function formatCredentials(credentials, serviceType) {
   if (serviceType === 'internet') {
     return `
@@ -122,12 +125,10 @@ Obrigado por escolher nossos serviços TV! ✨
   }
 }
 
-// Fechar conexão
+// Close database
 export function closeDatabase() {
   db.close()
 }
 
-// Inicializar quando o módulo for carregado (server-side only)
-if (typeof process !== 'undefined' && !process.browser && process.env.NODE_ENV !== 'test') {
-  initDatabase()
-}
+// Initialize when module loads
+console.log('📦 Database module loaded')
