@@ -1,5 +1,5 @@
 // Configuração de provedores de IA
-// Suporta: groq, openrouter, openai
+// Suporta: groq, openrouter, openai, ollama
 
 const AI_PROVIDERS = {
   groq: {
@@ -41,6 +41,21 @@ const AI_PROVIDERS = {
     ],
     envKey: 'OPENAI_API_KEY',
   },
+  ollama: {
+    name: 'Ollama (Self-Hosted)',
+    baseURL: process.env.OLLAMA_URL || 'http://localhost:11434/api',
+    defaultModel: 'llama3.2',
+    models: [
+      { id: 'llama3.2', name: 'Llama 3.2', context: 128000 },
+      { id: 'llama3.1', name: 'Llama 3.1', context: 128000 },
+      { id: 'mistral', name: 'Mistral', context: 32768 },
+      { id: 'phi4', name: 'Phi-4', context: 128000 },
+      { id: 'qwen2.5', name: 'Qwen 2.5', context: 128000 },
+    ],
+    envKey: 'OLLAMA_URL',
+    isLocal: true,
+    noAuth: true, // Ollama não usa API key por padrão
+  },
 }
 
 // Provedor ativo (padrão: groq)
@@ -55,6 +70,7 @@ export function getAllProviders() {
     key,
     name: config.name,
     models: config.models,
+    isLocal: config.isLocal || false,
   }))
 }
 
@@ -69,8 +85,9 @@ export function getModelConfig() {
     baseURL: provider.baseURL,
     model: model.id,
     modelName: model.name,
-    apiKey: process.env[provider.envKey],
+    apiKey: provider.noAuth ? null : process.env[provider.envKey],
     extraHeaders: provider.extraHeaders || {},
+    isLocal: provider.isLocal || false,
   }
 }
 
