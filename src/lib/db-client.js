@@ -1,134 +1,146 @@
-import Database from 'better-sqlite3'
-import crypto from 'crypto'
-import path from 'path'
-import fs from 'fs'
+import Database from 'better-sqlite3';
+import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
 
-// Ensure database directory exists
-const dbDir = path.join(process.cwd(), 'database')
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true })
+const dbPath = path.join(process.cwd(), 'database', 'clients.db');
+
+let db = null;
+
+export function getDB() {
+  if (!db) {
+    db = new Database(dbPath);
+    initDB();
+  }
+  return db;
 }
 
-// Initialize database
-const db = new Database(path.join(dbDir, 'clients.db'))
+function initDB() {
+  // Tabela de clientes
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS clients (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      cpf TEXT UNIQUE NOT NULL,
+      phone TEXT NOT NULL,
+      email TEXT,
+      city TEXT,
+      ip_address TEXT NOT NULL,
+      choice TEXT CHECK(choice IN ('internet', 'tv')),
+      status TEXT DEFAULT 'teste' CHECK(status IN ('teste', 'ativo', 'cancelado')),
+      onpix_user_id TEXT,
+      onpix_username TEXT,
+      onpix_password TEXT,
+      servex_user_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      test_expires_at DATETIME
+    )
+  `);
 
-// Initialize tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS tests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_hash TEXT NOT NULL,
-    ip_hash TEXT NOT NULL,
-    service_type TEXT NOT NULL CHECK(service_type IN ('internet', 'tv')),
-    server_id TEXT,
-    created_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    credentials TEXT
-  )
-`)
+  // Tabela de logs
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id TEXT,
+      action TEXT NOT NULL,
+      details TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (client_id) REFERENCES clients(id)
+    )
+  `);
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS chat_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_hash TEXT NOT NULL,
-    role TEXT NOT NULL,
-    content TEXT NOT NULL,
-    timestamp TEXT NOT NULL
-  )
-`)
-
-console.log('✅ Banco de dados inicializado')
-
-// Generate hash for anonymization
-function generateHash(data) {
-  return crypto.createHash('sha256').update(data).digest('hex').substring(0, 32)
+  // Tabela de conversas
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id TEXT,
+      message TEXT NOT NULL,
+      role TEXT CHECK(role IN ('user', 'assistant')),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (client_id) REFERENCES clients(id)
+    )
+  `);
 }
 
-// Check if user already has a test
-export async function checkTestLimit(userId, ip) {
-  const userHash = generateHash(userId)
-  const ipHash = generateHash(ip)
+export function createClient(clientData) {
+  const db = getDB();
   
-  const stmt = db.prepare('SELECT * FROM tests WHERE user_hash = ? AND ip_hash = ?')
-  const test = stmt.get(userHash, ipHash)
+  const stmt = db.prepare(`
+    INSERT INTO clients (
+      id, name, cpf, phone, email, city, ip_address, choice, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const id = uuidv4();
   
-  return test || null
-}
+  try {
+    stmt.run(
+      id,
+      clientData.name,
+      clientData.cpf,
+      clientData.phone,
+      clientData.email || null,
+      clientData.city || null,
+      clientData.ip,
+      clientData.choice,
+      'teste'
+    );
 
-// Save test record
-export async function saveTestRecord(userId, ip, serviceType, serverId, credentials) {
-  const userHash = generateHash(userId)
-  const ipHash = generateHash(ip)
-  const createdAt = new Date().toISOString()
-  const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString() // 4 hours
+    // Log
+    db.prepare('INSERT INTO logs (client_id, action, details) VALUES (?, ?, ?)')
+      .run(id, 'CLIENT_CREATED', JSON.stringify({ choice: clientData.choice }));
 
-  const credentialsJson = JSON.stringify(credentials)
-
-  const stmt = db.prepare(
-    `INSERT INTO tests (user_hash, ip_hash, service_type, server_id, created_at, expires_at, credentials)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  )
-  
-  const result = stmt.run(userHash, ipHash, serviceType, serverId || null, createdAt, expiresAt, credentialsJson)
-  
-  return { success: true, id: result.lastInsertRowid }
-}
-
-// Save message to history
-export async function saveMessage(userId, role, content) {
-  const userHash = generateHash(userId)
-  const timestamp = new Date().toISOString()
-
-  const stmt = db.prepare(
-    `INSERT INTO chat_history (user_hash, role, content, timestamp) 
-     VALUES (?, ?, ?, ?)`
-  )
-  
-  stmt.run(userHash, role, content, timestamp)
-}
-
-// Get user history
-export function getUserHistory(messages) {
-  // Filter only relevant messages (last 10)
-  return messages.slice(-10).map(msg => ({
-    role: msg.role,
-    content: msg.content
-  }))
-}
-
-// Format credentials for message
-export function formatCredentials(credentials, serviceType) {
-  if (serviceType === 'internet') {
-    return `
-✅ *Acesso Liberado!* ✅
-
-👤 *Login:* ${credentials.username}
-🔑 *Senha:* ${credentials.password}
-🔗 *Limite:* ${credentials.connections} Conexão
-📡 *Servidor:* ${credentials.server}
-🗓️ *Duração:* ${credentials.duration} horas
-
-Obrigado por escolher nossos serviços! ✨
-    `.trim()
-  } else {
-    return `
-📺 *Acesso à TV Liberado!* 📺
-
-👤 *Login:* ${credentials.username}
-🔑 *Senha:* ${credentials.password}
-🔗 *Limite:* ${credentials.connections} Conexão
-📡 *Servidor:* ${credentials.server}
-✅ *Package:* ${credentials.package_id}
-🗓️ *Duração:* ${credentials.duration} horas
-
-Obrigado por escolher nossos serviços TV! ✨
-    `.trim()
+    return { success: true, id, ...clientData };
+  } catch (error) {
+    if (error.message.includes('UNIQUE constraint failed: clients.cpf')) {
+      return { success: false, error: 'CPF já registrado' };
+    }
+    throw error;
   }
 }
 
-// Close database
-export function closeDatabase() {
-  db.close()
+export function getClientByCPF(cpf) {
+  const db = getDB();
+  return db.prepare('SELECT * FROM clients WHERE cpf = ?').get(cpf);
 }
 
-// Initialize when module loads
-console.log('📦 Database module loaded')
+export function getClientById(id) {
+  const db = getDB();
+  return db.prepare('SELECT * FROM clients WHERE id = ?').get(id);
+}
+
+export function updateClientOnPixData(id, { userId, username, password }) {
+  const db = getDB();
+  
+  const stmt = db.prepare(`
+    UPDATE clients 
+    SET onpix_user_id = ?, onpix_username = ?, onpix_password = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  
+  stmt.run(userId, username, password, id);
+  
+  // Log
+  db.prepare('INSERT INTO logs (client_id, action, details) VALUES (?, ?, ?)')
+    .run(id, 'ONPIX_ACCOUNT_CREATED', JSON.stringify({ username }));
+  
+  return { success: true };
+}
+
+export function listClients() {
+  const db = getDB();
+  return db.prepare('SELECT * FROM clients ORDER BY created_at DESC').all();
+}
+
+export function saveConversation(clientId, message, role) {
+  const db = getDB();
+  db.prepare('INSERT INTO conversations (client_id, message, role) VALUES (?, ?, ?)')
+    .run(clientId, message, role);
+}
+
+export function getConversationHistory(clientId) {
+  const db = getDB();
+  return db.prepare(
+    'SELECT * FROM conversations WHERE client_id = ? ORDER BY created_at ASC LIMIT 50'
+  ).all(clientId);
+}

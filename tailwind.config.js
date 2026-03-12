@@ -8,14 +8,26 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        primary: {
-          DEFAULT: '#7f22fe',
-          dark: '#6b1ad4',
+        'brand-purple': '#7c3aed',
+        'brand-purple-dark': '#6d28d9',
+        'brand-gradient-start': '#7c3aed',
+        'brand-gradient-end': '#2563eb',
+      },
+      animation: {
+        'fade-in': 'fadeIn 0.5s ease-in-out',
+        'slide-up': 'slideUp 0.5s ease-out',
+      },
+      keyframes: {
+        fadeIn: {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
         },
-        background: '#0a0a0a',
-        foreground: '#ffffff',
+        slideUp: {
+          '0%': { transform: 'translateY(20px)', opacity: '0' },
+          '100%': { transform: 'translateY(0)', opacity: '1' },
+        },
       },
     },
   },
   plugins: [],
-}
+};

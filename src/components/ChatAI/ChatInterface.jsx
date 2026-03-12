@@ -1,129 +1,215 @@
-'use client'
+'use client';
 
-import { useState, useRef, useEffect } from 'react'
-import { useMessages } from '@/hooks/useMessages'
+import React, { useState, useRef, useEffect } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 
-export default function ChatInterface() {
-  const [input, setInput] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const messagesEndRef = useRef(null)
+export default function ChatInterface({ onClientRegistered, clientData }) {
+  const [messages, setMessages] = useState([
+    {
+      id: 'welcome',
+      role: 'assistant',
+      content: `Olá! 👋 Bem-vindo à DivertiX!
 
-  const { 
-    messages, 
-    addMessage, 
-    addSystemMessage,
-    isLoading: messagesLoading 
-  } = useMessages()
+Sou sua assistente virtual e estou aqui para te ajudar a descobrir nossos serviços de internet e TV.
+
+🎁 **Promoção especial: 1 TESTE LIFETIME**
+- Teste gratuito que não expira
+- Escolha: Internet VPN ou TV
+- 1 teste por pessoa (identificado por CPF + IP)
+
+Como posso te ajudar hoje? 😊`,
+      timestamp: new Date().toISOString(),
+    },
+  ]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+    scrollToBottom();
+  }, [messages]);
 
-  // Mensagem inicial do sistema
-  useEffect(() => {
-    if (messages.length === 0) {
-      addSystemMessage({
-        role: 'system',
-        content: 'Olá! 👋 Bem-vindo à Divertirx, seu canal de diversão na internet. 🎬 O que você prefere: internet VPN ilimitada ou TV via Internet?'
-      })
-    }
-  }, [messages.length, addSystemMessage])
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return;
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (!input.trim() || isLoading) return
+    const userMessage = {
+      id: uuidv4(),
+      role: 'user',
+      content: input,
+      timestamp: new Date().toISOString(),
+    };
 
-    const userMessage = input.trim()
-    setInput('')
-    addMessage({ role: 'user', content: userMessage })
-    setIsLoading(true)
+    setMessages((prev) => [...prev, userMessage]);
+    setInput('');
+    setIsLoading(true);
 
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: userMessage,
-          userId: sessionStorage.getItem('divertirx_userId') || 
-                  (sessionStorage.setItem('divertirx_userId', crypto.randomUUID()), sessionStorage.getItem('divertirx_userId')),
-          ip: 'client_ip', // Capturar IP do lado do cliente se necessário
+          message: input,
+          history: messages,
+          clientData,
         }),
-      })
+      });
 
-      if (!response.ok) throw new Error('Erro ao processar mensagem')
+      const data = await response.json();
 
-      const data = await response.json()
-      addMessage({ role: 'assistant', content: data.response })
-
-    } catch (error) {
-      console.error('Erro:', error)
-      addMessage({
+      const aiMessage = {
+        id: uuidv4(),
         role: 'assistant',
-        content: 'Opa! Não consegui processar sua mensagem. Pode tentar de novo? 😅'
-      })
+        content: data.response,
+        timestamp: new Date().toISOString(),
+      };
+
+      setMessages((prev) => [...prev, aiMessage]);
+
+      // Se a AI identificou que o usuário quer se registrar
+      if (data.action === 'show_registration') {
+        setShowForm(true);
+      }
+
+      // Se o usuário foi registrado
+      if (data.clientData) {
+        onClientRegistered(data.clientData);
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: uuidv4(),
+          role: 'assistant',
+          content: 'Ops! Tive um problema técnico. Pode tentar novamente?',
+          timestamp: new Date().toISOString(),
+        },
+      ]);
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const handleTestChoice = async (choice) => {
+    const message = choice === 'internet' 
+      ? 'Quero testar a Internet VPN'
+      : 'Quero testar a TV';
+    
+    setInput(message);
+    await handleSend();
+  };
 
   return (
-    <div className="flex flex-col h-[600px]">
-      {/* Área de mensagens */}
-      <div className="flex-1 overflow-y-auto space-y-4 mb-4 p-4 rounded-xl bg-white/5">
+    <div className="flex flex-col h-full bg-gray-900/50 rounded-2xl border border-white/10 overflow-hidden">
+      {/* Chat Header */}
+      <div className="p-4 border-b border-white/10 bg-purple-900/20">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-lg">
+            🤖
+          </div>
+          <div>
+            <h3 className="font-semibold text-white">DivertiX Assistant</h3>
+            <p className="text-xs text-gray-400">Sempre online para te ajudar</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg) => (
           <div
             key={msg.id}
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+              className={`max-w-[85%] px-4 py-3 rounded-2xl ${
                 msg.role === 'user'
-                  ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-br-none'
-                  : 'bg-white/10 text-white rounded-bl-none backdrop-blur-sm'
+                  ? 'bg-purple-600 text-white rounded-tr-sm'
+                  : 'bg-gray-800 text-gray-100 rounded-tl-sm border border-white/5'
               }`}
             >
-              <p className="text-sm leading-relaxed">{msg.content}</p>
+              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
+                {msg.content}
+              </pre>
             </div>
           </div>
         ))}
+
+        {/* Quick Actions */}
+        {!clientData && messages.length === 1 && (
+          <div className="flex flex-wrap gap-2 justify-center pt-4">
+            <button
+              onClick={() => handleTestChoice('internet')}
+              className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-full text-sm font-medium transition transform hover:scale-105"
+            >
+              🌐 Quero Internet VPN
+            </button>
+            <button
+              onClick={() => handleTestChoice('tv')}
+              className="px-4 py-2 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 rounded-full text-sm font-medium transition transform hover:scale-105"
+            >
+              📺 Quero TV
+            </button>
+            <button
+              onClick={() => handleTestChoice('both')}
+              className="px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 rounded-full text-sm font-medium transition transform hover:scale-105"
+            >
+              💎 Quero os dois
+            </button>
+          </div>
+        )}
+
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-white/10 rounded-2xl rounded-bl-none px-4 py-3 backdrop-blur-sm">
-              <div className="flex space-x-1">
-                <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+            <div className="bg-gray-800 text-gray-100 px-4 py-3 rounded-2xl rounded-tl-sm border border-white/5">
+              <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
               </div>
             </div>
           </div>
         )}
+
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Área de entrada */}
-      <form onSubmit={handleSubmit} className="flex gap-2">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Digite sua mensagem..."
-          disabled={isLoading}
-          className="flex-1 bg-white/10 text-white placeholder-white/50 rounded-xl px-4 py-3 outline-none focus:ring-2 focus:ring-purple-500 transition-all"
-        />
-        <button
-          type="submit"
-          disabled={!input.trim() || isLoading}
-          className="bg-gradient-to-r from-purple-600 to-blue-600 text-white px-6 py-3 rounded-xl font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          ✉️
-        </button>
-      </form>
+      {/* Input Area */}
+      <div className="p-4 border-t border-white/10 bg-gray-900/80">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder="Digite sua mensagem..."
+            className="flex-1 px-4 py-3 bg-gray-800 border border-white/10 rounded-xl focus:outline-none focus:border-purple-500 text-white placeholder-gray-500"
+            disabled={isLoading}
+          />
+          <button
+            onClick={handleSend}
+            disabled={isLoading || !input.trim()}
+            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 rounded-xl font-medium transition"
+          >
+            {isLoading ? '...' : 'Enviar'}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 mt-2 text-center">
+          DivertiX • Internet VPN R$20/mês • TV R$25/mês • Teste gratuito
+        </p>
+      </div>
     </div>
-  )
+  );
 }

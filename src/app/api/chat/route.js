@@ -1,106 +1,144 @@
-import { NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { checkTestLimit, saveTestRecord, getUserHistory } from '@/lib/db-client'
-import { generateAIResponse } from '@/lib/ai-chat'
-import { createTestClientOnPix } from '@/lib/api-onpix'
-import { createTestClientServX } from '@/lib/api-servex'
+import { NextResponse } from 'next/server';
 
-// Sistema de prompt para IA humanizada
-const SYSTEM_PROMPT = `
-Você é a Divertirx, uma assistente amigável e humanizada que ajuda usuários a encontrar entretenimento na internet.
+const SYSTEM_PROMPT = `Você é a assistente virtual da DivertiX, uma plataforma de vendas de Internet VPN Ilimitada e TV via Internet no Brasil.
 
-SUAS REGRAS IMPORTANTES:
-1. Você só pode oferecer 2 serviços: Internet VPN Ilimitada (R$20/mês) ou TV via Internet (R$25/mês)
-2. Cada pessoa só pode fazer 1 teste NO LIFETIME (não importa o tempo)
-3. Se a pessoa já fez teste, responda: "Já fizemos seu teste! 🎁 Você usou: [serviço escolhido]"
-4. Se a pessoa quer testar, pergunte qual serviço prefere: Internet VPN ou TV via Internet
-5. Se escolher TV, pergunte qual servidor quer testar
-6. Ao criar teste, informe credenciais e prazo (4 horas)
-7. Se quiser contratar, informe os preços e peça pagamento via PIX
-8. Se quiser renovar, peça o usuário e faça o processo
+SERVIÇOS OFERECIDOS:
+1. Internet VPN Ilimitada - R$20/mês
+2. TV via Internet - R$25/mês
 
-SEU TON:
-- Seja amigável, use emojis moderadamente
-- Seja direto e objetivo
-- Não use menus de números (1, 2, 3)
-- Use conversa natural como um atendente de verdade
+PROMOÇÃO: 1 TESTE LIFETIME por pessoa (CPF + IP únicos)
 
-Comece sempre com uma saudação acolhedora e apresente os serviços.
-`
+Seja amigável, use emojis e ajude o cliente a escolher.`;
+
+async function callNVIDIA(message, history) {
+  const apiKey = process.env.NVIDIA_API_KEY;
+  const baseUrl = process.env.NVIDIA_BASE_URL || 'https://integrate.api.nvidia.com/v1';
+  
+  if (!apiKey) {
+    throw new Error('NVIDIA_API_KEY não configurada');
+  }
+
+  try {
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...history.slice(-10).map(m => ({ role: m.role, content: m.content })),
+      { role: 'user', content: message },
+    ];
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'qwen/qwen3.5-397b-a17b',
+        messages,
+        temperature: 0.7,
+        max_tokens: 1024,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API retornou ${response.status}: ${errorText.substring(0, 200)}`);
+    }
+
+    const data = await response.json();
+    
+    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+      throw new Error('Resposta da API em formato inesperado');
+    }
+    
+    return data.choices[0].message.content;
+
+  } catch (error) {
+    console.error('Erro na chamada NVIDIA:', error);
+    throw error;
+  }
+}
+
+// Fallback simpático quando a IA não funciona
+function getFallbackResponse(message) {
+  const lowerMsg = message.toLowerCase();
+  
+  if (lowerMsg.includes('tv')) {
+    return `Oi! 📺 Que legal que você quer conhecer nossa TV! 
+
+Oferecemos TV via internet por apenas **R$25/mês** com canais em HD e acesso em qualquer dispositivo.
+
+🎁 **Teste Lifetime grátis!** Não expira, mas é só 1 por pessoa.
+
+Qual seu nome para eu começar seu cadastro?`;
+  }
+  
+  if (lowerMsg.includes('internet') || lowerMsg.includes('vpn')) {
+    return `Oi! 🌐 Nossa Internet VPN é top!
+
+**R$20/mês** - Ilimitada, 100 Mbps, funciona em qualquer lugar.
+
+🎁 **Teste Lifetime grátis!** Só 1 teste por pessoa (CPF + IP).
+
+Como posso te chamar?`;
+  }
+
+  return `Olá! 👋 Bem-vindo à DivertiX!
+
+Oferecemos:
+📺 TV via Internet - R$25/mês  
+🌐 Internet VPN - R${'2'}0/mês
+
+🎁 **1 TESTE LIFETIME GRÁTIS** (não expira!)
+
+Qual você quer testar?`;
+}
 
 export async function POST(request) {
   try {
-    const data = await request.json()
-    const { 
-      message, 
-      userId, 
-      ip,
-      chatHistory = []
-    } = data
+    const body = await request.json();
+    const { message, history = [] } = body;
 
-    // Verificar se usuário já fez teste
-    const existingTest = await checkTestLimit(userId, ip)
-    
-    // Se já testou, informar e encerrar
-    if (existingTest) {
+    if (!message) {
       return NextResponse.json({
-        response: `Já fizemos seu teste! 🎁 Você usou: ${existingTest.service_type === 'internet' ? 'Internet VPN Ilimitada' : 'TV via Internet'}.\n\nObrigado por usar a Divertirx!`,
-        newMessageId: uuidv4()
-      })
+        response: 'Oi! Pode me dizer o que você precisa? 😊',
+        action: null,
+      });
     }
 
-    // Pegar histórico para contexto
-    const history = getUserHistory(chatHistory)
-    
-    // Gerar resposta da IA
-    const aiResponse = await generateAIResponse({
-      message,
-      history,
-      systemPrompt: SYSTEM_PROMPT
-    })
-
-    // Se a IA detectou que usuário quer criar teste
-    if (aiResponse.wantsTest) {
-      const testType = aiResponse.testType // 'internet' ou 'tv'
-      const serverId = aiResponse.serverId // se for TV
-
-      // Criar teste no painel correspondente
-      let testResult
-      if (testType === 'internet') {
-        testResult = await createTestClientServX(userId, 4)
-      } else if (testType === 'tv') {
-        testResult = await createTestClientOnPix(serverId, userId, 4)
-      }
-
-      if (testResult.success) {
-        // Salvar registro de teste
-        await saveTestRecord(userId, ip, testType, serverId, testResult.credentials)
-
-        return NextResponse.json({
-          response: `🔥 Seu teste foi criado com sucesso! 🎉\n\n${testResult.credenciaisFormatadas}\n\nDuração: 4 horas\nBoa diversão!`,
-          newMessageId: uuidv4(),
-          testCreated: true,
-          credentials: testResult.credentials
-        })
-      } else {
-        return NextResponse.json({
-          response: `⚠️ Não consegui criar seu teste no momento. Por favor, tente novamente ou entre em contato com suporte.`,
-          newMessageId: uuidv4()
-        })
-      }
+    // Tentar IA
+    try {
+      const aiResponse = await callNVIDIA(message, history);
+      return NextResponse.json({
+        response: aiResponse,
+        action: null,
+        source: 'ai',
+      });
+    } catch (aiError) {
+      console.log('IA falhou, usando fallback:', aiError.message);
+      
+      // Usar resposta fallback
+      const fallbackResponse = getFallbackResponse(message);
+      return NextResponse.json({
+        response: fallbackResponse,
+        action: null,
+        source: 'fallback',
+      });
     }
-
-    return NextResponse.json({
-      response: aiResponse.text,
-      newMessageId: uuidv4()
-    })
 
   } catch (error) {
-    console.error('Erro no chat:', error)
+    console.error('Erro geral:', error);
     return NextResponse.json({
-      response: 'Opa! Não consegui processar sua mensagem. Pode tentar de novo?',
-      newMessageId: uuidv4(),
-      error: error.message
-    }, { status: 500 })
+      response: `Oi! Tô com um probleminha técnico aqui, mas puxa vida, não deixa eu te deixar na mão! 😅
+
+Pode me dizer se você quer **Internet VPN** ou **TV**? Aí eu já te ajudo!`,
+      action: null,
+      source: 'error',
+    });
   }
 }
