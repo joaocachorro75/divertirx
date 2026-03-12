@@ -142,7 +142,7 @@ export async function POST(request) {
         try {
           const actionData = JSON.parse(createActionMatch[0]);
           // Chamar API de registro
-          const registerResponse = await fetch(new URL('/api/register', request.url), {
+          const registerResponse = await fetch(new URL('/api/teste', request.url), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(actionData.data),
