@@ -23,7 +23,6 @@ Como posso te ajudar hoje? 😊`,
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showForm, setShowForm] = useState(false);
   const messagesEndRef = useRef(null);
 
   const scrollToBottom = () => {
@@ -61,21 +60,40 @@ Como posso te ajudar hoje? 😊`,
 
       const data = await response.json();
 
-      const aiMessage = {
-        id: uuidv4(),
-        role: 'assistant',
-        content: data.response,
-        timestamp: new Date().toISOString(),
-      };
+      // Se retornou dados de teste criado, mostrar no chat
+      if (data.testCreated) {
+        const successMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: `🎉 **Teste criado com sucesso!**
 
-      setMessages((prev) => [...prev, aiMessage]);
+Aqui estão seus dados de acesso:
 
-      // Se a AI identificou que o usuário quer se registrar
-      if (data.action === 'show_registration') {
-        setShowForm(true);
+📱 **Usuário:** \`${data.testCreated.username}\`
+🔑 **Senha:** \`${data.testCreated.password}\`
+🖥️ **Servidor:** ${data.testCreated.server || 'PIX GOLD'}
+⏰ **Expira em:** ${data.testCreated.expiresAt || '4 horas'}
+
+**Como usar:**
+1. Baixe o app do player IPTV
+2. Digite usuário e senha acima
+3. Pronto! Aproveite!
+
+Guarde esses dados com carinho! 💜`,
+          timestamp: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, successMessage]);
+      } else {
+        // Resposta normal da IA
+        const aiMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          content: data.response,
+          timestamp: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, aiMessage]);
       }
 
-      // Se o usuário foi registrado
       if (data.clientData) {
         onClientRegistered(data.clientData);
       }
@@ -102,13 +120,12 @@ Como posso te ajudar hoje? 😊`,
     }
   };
 
-  const handleTestChoice = async (choice) => {
+  const handleQuickChoice = async (choice) => {
     const message = choice === 'internet' 
       ? 'Quero testar a Internet VPN'
       : 'Quero testar a TV';
-    
     setInput(message);
-    await handleSend();
+    setTimeout(() => handleSend(), 100);
   };
 
   return (
@@ -147,26 +164,20 @@ Como posso te ajudar hoje? 😊`,
           </div>
         ))}
 
-        {/* Quick Actions */}
+        {/* Quick Actions - Only on first message */}
         {!clientData && messages.length === 1 && (
           <div className="flex flex-wrap gap-2 justify-center pt-4">
             <button
-              onClick={() => handleTestChoice('internet')}
+              onClick={() => handleQuickChoice('internet')}
               className="px-4 py-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-full text-sm font-medium transition transform hover:scale-105"
             >
               🌐 Quero Internet VPN
             </button>
             <button
-              onClick={() => handleTestChoice('tv')}
+              onClick={() => handleQuickChoice('tv')}
               className="px-4 py-2 bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 rounded-full text-sm font-medium transition transform hover:scale-105"
             >
               📺 Quero TV
-            </button>
-            <button
-              onClick={() => handleTestChoice('both')}
-              className="px-4 py-2 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 rounded-full text-sm font-medium transition transform hover:scale-105"
-            >
-              💎 Quero os dois
             </button>
           </div>
         )}
